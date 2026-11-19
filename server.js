@@ -28,6 +28,9 @@ const LIVE_WINDOW_SEC = Number(process.env.LIVE_WINDOW_SEC || 10);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.json({ limit: '16kb' }));
+// the dashboard login form posts as x-www-form-urlencoded, not json - without
+// this parser req.body is empty and every login looks like a wrong password
+app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 app.use(cookieParser(SECRET));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
@@ -284,10 +287,15 @@ app.get('/', requireRole(), (req, res) => {
 app.post('/login', async (req, res) => {
   try {
     const { user, pass } = req.body || {};
+    if (!user || !pass) {
+      console.warn('[dash login] empty body - is express.urlencoded missing?');
+      return res.render('login', { error: 'Form did not arrive, check the fields.' });
+    }
     if (rateLimited(clientIp(req))) {
       return res.render('login', { error: 'Too many attempts, wait a minute.' });
     }
-    const row = await db.one('SELECT * FROM users WHERE lower(username) = lower($1)', [user || '']);
+    const row = await db.one('SELECT * FROM users WHERE lower(username) = lower($1)',
+                             [String(user).trim()]);
     if (!row || row.disabled || !auth.verifyPassword(pass || '', row.pass_hash)) {
       return res.render('login', { error: 'Wrong user or password.' });
     }
@@ -466,17 +474,36 @@ async function bootstrap() {
   await db.migrate();
   auth.initSigning();
 
-  const owner = await db.one(`SELECT id FROM users WHERE role = 'owner' LIMIT 1`);
-  if (!owner) {
-    const username = process.env.BOOTSTRAP_USER || 'admin';
+  // The owner account is only created when none exists - which means a first
+  // deploy that ran without BOOTSTRAP_PASS leaves a random password behind and
+  // later env changes do nothing. FORCE_BOOTSTRAP=1 re-applies the env values
+  // on every boot, so the login can always be reset from the dashboard.
+  const force = String(process.env.FORCE_BOOTSTRAP || '') === '1';
+  const owner = await db.one(`SELECT id, username FROM users WHERE role = 'owner' ORDER BY id LIMIT 1`);
+
+  if (!owner || force) {
+    const username = (process.env.BOOTSTRAP_USER || 'admin').trim();
     const password = process.env.BOOTSTRAP_PASS || crypto.randomBytes(9).toString('base64url');
-    await db.query('INSERT INTO users (username, pass_hash, role) VALUES ($1, $2, $3)',
-                   [username, auth.hashPassword(password), 'owner']);
-    console.log('════════════════════════════════════════════════════');
-    console.log(' bootstrap owner account (dashboard only)');
-    console.log(`   user: ${username}`);
-    console.log(`   pass: ${password}`);
-    console.log('════════════════════════════════════════════════════');
+    const hash = auth.hashPassword(password);
+
+    if (!owner) {
+      await db.query('INSERT INTO users (username, pass_hash, role) VALUES ($1, $2, $3)',
+                     [username, hash, 'owner']);
+      console.log('════════════════════════════════════════════════════');
+      console.log(' owner account created');
+      console.log(`   user: ${username}`);
+      console.log(`   pass: ${password}`);
+      console.log('════════════════════════════════════════════════════');
+    } else {
+      await db.query(`UPDATE users SET username = $1, pass_hash = $2, role = 'owner', disabled = FALSE
+                       WHERE id = $3`, [username, hash, owner.id]);
+      console.log('════════════════════════════════════════════════════');
+      console.log(' FORCE_BOOTSTRAP: owner credentials reset from env');
+      console.log(`   user: ${username}`);
+      console.log(`   pass: ${password}`);
+      console.log(' remove FORCE_BOOTSTRAP once you are in');
+      console.log('════════════════════════════════════════════════════');
+    }
   }
 
   app.listen(PORT, () => console.log(`[straw] listening on :${PORT}`));
