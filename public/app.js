@@ -91,7 +91,7 @@ async function loadLive() {
         <tr>
           <td class="mono">${esc(d.key)}</td>
           <td>
-            <div class="mono">${esc((d.hwid || '').slice(0, 16))}…</div>
+            <div class="mono">${esc((d.machine_id || d.hwid || '').replace(/^guid:|^hwid:/, '').slice(0, 16))}…</div>
             <div class="muted small">${esc(machine)}</div>
             <div class="muted small mono">${esc(hw(info, 'volume'))} ${esc(hw(info, 'machine_guid').slice(0, 8))}</div>
           </td>
@@ -102,9 +102,20 @@ async function loadLive() {
             <button class="${d.banned ? 'ghost' : 'danger'}" data-ban="${d.key_id}" data-state="${d.banned}">
               ${d.banned ? 'unban' : 'ban key'}
             </button>
+            <button class="ghost" data-forget="${d.id}" title="remove this machine row">forget</button>
           </td>
         </tr>`;
     }).join('') || '<tr><td colspan="6" class="muted">nothing connected yet</td></tr>';
+
+    for (const btn of body.querySelectorAll('[data-forget]')) {
+      btn.addEventListener('click', async () => {
+        try {
+          await api(`/api/admin/devices/${btn.dataset.forget}`, { method: 'DELETE' });
+          toast('machine row removed');
+          loadLive(); loadStats();
+        } catch (e) { toast(e.message, true); }
+      });
+    }
 
     for (const btn of body.querySelectorAll('[data-ban]')) {
       btn.addEventListener('click', async () => {

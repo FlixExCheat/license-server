@@ -63,6 +63,15 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS devices_key_idx ON devices(key_id);
     CREATE INDEX IF NOT EXISTS devices_seen_idx ON devices(last_seen DESC);
 
+    -- a machine is identified by its stable hardware id (machine_guid), not by
+    -- the hwid hash: when the client hash changes, the same pc must stay one row
+    ALTER TABLE keys    ADD COLUMN IF NOT EXISTS machine_id TEXT;
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS machine_id TEXT;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS devices_machine_idx
+      ON devices (key_id, machine_id)
+      WHERE machine_id IS NOT NULL;
+
     -- pushed offset tables: the client compares its version against the newest
     CREATE TABLE IF NOT EXISTS updates (
       id          BIGSERIAL PRIMARY KEY,

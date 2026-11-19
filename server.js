@@ -132,6 +132,23 @@ function updateTicket(latest) {
   return `${signed.payload}|${signed.sig}`;
 }
 
+// A machine is its stable hardware id, not the hwid hash - if the client hash
+// ever changes, the same pc must not look like a second machine.
+function machineIdOf(hwid, hw) {
+  const guid = hw && typeof hw.machine_guid === 'string' ? hw.machine_guid.trim() : '';
+  return guid ? `guid:${guid.toLowerCase()}` : `hwid:${hwid}`;
+}
+
+async function trackDevice(keyId, machineId, hwid, hw, ip) {
+  await db.query(
+    `INSERT INTO devices (key_id, machine_id, hwid, hw_info, ip)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (key_id, machine_id) WHERE machine_id IS NOT NULL DO UPDATE
+       SET last_seen = now(), ip = EXCLUDED.ip, hwid = EXCLUDED.hwid,
+           hw_info = EXCLUDED.hw_info`,
+    [keyId, machineId, hwid, hw || null, ip]);
+}
+
 async function banKey(keyId, reason) {
   await db.query(
     `UPDATE keys SET banned = TRUE, ban_reason = $1, banned_at = now() WHERE id = $2`,
@@ -151,37 +168,31 @@ app.post('/api/v1/session', async (req, res) => {
       return res.status(403).json({ error: 'banned', reason: row.ban_reason || 'banned' });
     }
 
-    // second machine on the same key: ban immediately, this is the whole point
-    if (row.hwid && row.hwid !== hwid) {
+    const ip = clientIp(req);
+    const machineId = machineIdOf(hwid, hw);
+
+    // a *different machine* on the same key gets it banned on the spot. Identity
+    // is the hardware id, so a client whose hash changed is still the same pc.
+    if (row.machine_id && row.machine_id !== machineId) {
       await banKey(row.id, 'used on a second machine');
-      await db.query(
-        `INSERT INTO devices (key_id, hwid, hw_info, ip)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (key_id, hwid) DO UPDATE
-           SET last_seen = now(), ip = EXCLUDED.ip, hw_info = EXCLUDED.hw_info`,
-        [row.id, hwid, hw || null, clientIp(req)]);
-      console.warn(`[ban] ${row.code} second hwid ${hwid.slice(0, 12)} from ${clientIp(req)}`);
+      await trackDevice(row.id, machineId, hwid, hw, ip);
+      console.warn(`[ban] ${row.code} second machine ${machineId.slice(0, 20)} from ${ip}`);
       return res.status(403).json({ error: 'banned', reason: 'used on a second machine' });
     }
 
-    const ip = clientIp(req);
-    if (!row.hwid) {
+    if (!row.machine_id) {
       await db.query(
-        `UPDATE keys SET hwid = $1, hw_info = $2, first_ip = $3, last_ip = $3,
-                first_seen = now(), last_seen = now()
-          WHERE id = $4`,
-        [hwid, hw || null, ip, row.id]);
+        `UPDATE keys SET machine_id = $1, hwid = $2, hw_info = $3,
+                first_ip = $4, last_ip = $4, first_seen = now(), last_seen = now()
+          WHERE id = $5`,
+        [machineId, hwid, hw || null, ip, row.id]);
     } else {
-      await db.query('UPDATE keys SET last_seen = now(), last_ip = $1 WHERE id = $2',
-                     [ip, row.id]);
+      await db.query(
+        'UPDATE keys SET hwid = $1, hw_info = $2, last_seen = now(), last_ip = $3 WHERE id = $4',
+        [hwid, hw || null, ip, row.id]);
     }
 
-    await db.query(
-      `INSERT INTO devices (key_id, hwid, hw_info, ip)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (key_id, hwid) DO UPDATE
-         SET last_seen = now(), ip = EXCLUDED.ip, hw_info = EXCLUDED.hw_info`,
-      [row.id, hwid, hw || null, ip]);
+    await trackDevice(row.id, machineId, hwid, hw, ip);
 
     // a build older than the newest pushed offset table is not allowed in
     const behind = await outdated(req.body?.version);
@@ -218,16 +229,20 @@ app.post('/api/v1/ping', async (req, res) => {
     }
 
     const ip = clientIp(req);
+    const machineId = machineIdOf(hwid, hw);
+
+    if (row.machine_id && row.machine_id !== machineId) {
+      await banKey(row.id, 'used on a second machine');
+      console.warn(`[ban] ${row.code} second machine ${machineId.slice(0, 20)} on ping`);
+      return res.json({ ok: false, banned: true, reason: 'used on a second machine' });
+    }
+
     await db.query(
       `UPDATE keys SET last_seen = now(), last_ip = $1,
-              hwid = COALESCE(hwid, $2), first_seen = COALESCE(first_seen, now())
-        WHERE id = $3`, [ip, hwid, row.id]);
-    await db.query(
-      `INSERT INTO devices (key_id, hwid, hw_info, ip)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (key_id, hwid) DO UPDATE
-         SET last_seen = now(), ip = EXCLUDED.ip, hw_info = EXCLUDED.hw_info`,
-      [row.id, hwid, hw || null, ip]);
+              machine_id = COALESCE(machine_id, $2), hwid = $3,
+              hw_info = $4, first_seen = COALESCE(first_seen, now())
+        WHERE id = $5`, [ip, machineId, hwid, hw || null, row.id]);
+    await trackDevice(row.id, machineId, hwid, hw, ip);
 
     const behindPing = await outdated(req.body?.version);
     if (behindPing) {
@@ -366,8 +381,8 @@ app.post('/api/admin/keys/:id/reset', requireRole('owner', 'admin'), async (req,
   const id = Number(req.params.id);
   await db.query(
     `UPDATE keys SET banned = FALSE, ban_reason = NULL, banned_at = NULL,
-            hwid = NULL, hw_info = NULL, first_ip = NULL, last_ip = NULL,
-            first_seen = NULL, last_seen = NULL
+            hwid = NULL, hw_info = NULL, machine_id = NULL,
+            first_ip = NULL, last_ip = NULL, first_seen = NULL, last_seen = NULL
       WHERE id = $1`, [id]);
   await db.query('DELETE FROM devices WHERE key_id = $1', [id]);
   res.json({ ok: true });
