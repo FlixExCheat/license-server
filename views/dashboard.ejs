@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>straw · dashboard</title>
+  <link rel="stylesheet" href="/public/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span>straw</span> panel</div>
+    <nav>
+      <button data-tab="live" class="tab active">live</button>
+      <button data-tab="keys" class="tab">keys</button>
+      <button data-tab="updates" class="tab">offsets</button>
+      <button data-tab="users" class="tab">panel users</button>
+    </nav>
+    <div class="right row">
+      <span id="clock" class="muted mono"></span>
+      <form method="post" action="/logout"><button class="ghost">sign out</button></form>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats">
+      <div class="card stat live"><span id="stat-live">–</span><label>live now</label></div>
+      <div class="card stat"><span id="stat-keys">–</span><label>keys</label></div>
+      <div class="card stat"><span id="stat-banned">–</span><label>banned</label></div>
+      <div class="card stat"><span id="stat-hwids">–</span><label>unique machines</label></div>
+    </section>
+
+    <section id="pane-live" class="pane">
+      <div class="row space">
+        <h2>machines <span class="muted" style="text-transform:none">· refreshes every 3 s</span></h2>
+        <span id="live-updated" class="muted mono"></span>
+      </div>
+      <div class="card">
+        <table id="live-table">
+          <thead>
+            <tr><th>key</th><th>machine</th><th>ip</th><th>last ping</th><th>state</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pane-keys" class="pane hidden">
+      <div class="card form">
+        <h2>create keys</h2>
+        <div class="row">
+          <label>days <input id="key-days" type="number" value="30" min="1" max="3650" /></label>
+          <label>count <input id="key-count" type="number" value="1" min="1" max="50" /></label>
+          <label class="grow">note <input id="key-note" placeholder="who is it for" /></label>
+          <button id="key-create" class="primary">create</button>
+        </div>
+        <pre id="key-result" class="out hidden"></pre>
+      </div>
+
+      <div class="row space">
+        <h2>keys</h2>
+        <button id="keys-refresh" class="ghost">refresh</button>
+      </div>
+      <div class="card">
+        <table id="keys-table">
+          <thead>
+            <tr><th>key</th><th>days</th><th>hwid</th><th>ip</th><th>note</th><th>state</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pane-updates" class="pane hidden">
+      <div class="card form">
+        <h2>push offsets</h2>
+        <p class="muted">
+          Paste the offset table (the same shape as <code>offsets.json</code> next to the exe:
+          <code>{"dwEntityList":"0x2709010", ...}</code>). Version is assigned automatically.
+          Every connected client is offered the push on its next ping; clients that are behind
+          cannot log in until they installed it.
+        </p>
+        <label>note <input id="update-note" placeholder="what moved, e.g. build 14197 statics" /></label>
+        <textarea id="update-payload" rows="12" spellcheck="false"
+                  placeholder='{ "dwEntityList": "0x2709010", "dwLocalPlayerPawn": "0x2553D38" }'></textarea>
+        <div class="row">
+          <button id="update-push" class="primary">publish</button>
+          <span id="update-result" class="muted mono"></span>
+        </div>
+      </div>
+
+      <div class="row space">
+        <h2>pushed versions</h2>
+        <button id="updates-refresh" class="ghost">refresh</button>
+      </div>
+      <div class="card">
+        <table id="updates-table">
+          <thead><tr><th>v</th><th>note</th><th>sha256</th><th>size</th><th>pushed</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pane-users" class="pane hidden">
+      <div class="card form">
+        <h2>create panel user</h2>
+        <div class="row">
+          <label>username <input id="user-name" placeholder="name" /></label>
+          <label>password <input id="user-pass" type="password" placeholder="min 6 chars" /></label>
+          <label>role
+            <select id="user-role">
+              <option value="staff">staff</option>
+              <option value="admin">admin</option>
+              <option value="owner">owner</option>
+            </select>
+          </label>
+          <button id="user-create" class="primary">create</button>
+        </div>
+      </div>
+
+      <div class="row space">
+        <h2>panel users</h2>
+        <button id="users-refresh" class="ghost">refresh</button>
+      </div>
+      <div class="card">
+        <table id="users-table">
+          <thead><tr><th>#</th><th>user</th><th>role</th><th>state</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script>window.ME = { role: "<%= role %>" };</script>
+  <script src="/public/app.js"></script>
+</body>
+</html>

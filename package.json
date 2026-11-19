@@ -1,0 +1,20 @@
+{
+  "name": "straw-license-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Key/licence backend and dashboard for straw",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}
